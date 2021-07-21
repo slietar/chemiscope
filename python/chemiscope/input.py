@@ -9,12 +9,235 @@ import os
 
 import numpy as np
 
-from .adapters import (
+from .structures import (
     frames_to_json,
     atom_properties,
-    atom_centers,
     structure_properties,
 )
+
+
+def create_input(
+    frames, meta=None, properties=None, environments=None, composition=False
+):
+    """
+    Create a dictionary that can be saved to JSON using the format used by
+    the default chemiscope visualizer.
+
+    :param list frames: list of atomic structures. For now, only `ase.Atoms`_
+                        objects are supported
+    :param dict meta: optional metadata of the dataset, see below
+    :param dict properties: optional dictionary of additional properties, see below
+    :param list environments: optional list of (structure id, atom id, cutoff)
+        specifying which atoms have properties attached and how far out
+        atom-centered environments should be drawn by default
+    :param bool composition: optional, ``False`` by default. If ``True``, will
+        add to structure and atom properties containing information about the
+        chemical composition
+
+    The dataset metadata should be given in the ``meta`` dictionary, the
+    possible keys are:
+
+    .. code-block:: python
+
+        meta = {
+            'name': '...',         # str, dataset name
+            'description': '...',  # str, dataset description
+            'authors': [           # list of str, dataset authors, OPTIONAL
+                '...',
+            ],
+            'references': [        # list of str, references for this dataset,
+                '...',             # OPTIONAL
+            ],
+        }
+
+    The returned dictionary will contain all the properties defined on the
+    `ase.Atoms`_ objects. Values in ``ase.Atoms.arrays`` are mapped to
+    ``target = "atom"`` properties; while values in ``ase.Atoms.info`` are
+    mapped to ``target = "structure"`` properties. The only exception is
+    ``ase.Atoms.arrays["numbers"]``, which is always ignored. If you want to
+    have the atomic numbers as a property, you should add it to ``properties``
+    manually.
+
+    Additional properties can be added with the ``properties`` parameter. This
+    parameter should be a dictionary containing one entry for each property.
+    Each entry contains a ``target`` attribute (``'atom'`` or ``'structure'``)
+    and a set of values. ``values`` can be a Python list of float or string; a
+    1D numpy array of numeric values; or a 2D numpy array of numeric values. In
+    the later case, multiple properties will be generated along the second axis.
+    For example, passing
+
+    .. code-block:: python
+
+        properties = {
+            'cheese': {
+                'target': 'atom',
+                'values': np.zeros((300, 4)),
+                # optional: property unit
+                'unit': 'random / fs',
+                # optional: property description
+                'description': 'a random property for example',
+            }
+        }
+
+    will generate four properties named ``cheese[1]``, ``cheese[2]``,
+    ``cheese[3]``,  and ``cheese[4]``, each containing 300 values.
+
+    It is also possible to pass shortened representation of the properties, for
+    instance:
+
+    .. code-block:: python
+
+        properties = {
+            'cheese':  np.zeros((300, 4)),
+            }
+        }
+
+    In this case, the type of property (structure or atom) would be deduced
+    by comparing the numbers atoms and structures in the dataset to the
+    length of provided list/np.ndarray.
+
+    .. _`ase.Atoms`: https://wiki.fysik.dtu.dk/ase/ase/atoms.html
+    """
+
+    data = {
+        "meta": _normalize_metadata(meta if meta is not None else {}),
+        "structures": frames_to_json(frames),
+    }
+
+    if environments is not None:
+        data["environments"] = _normalize_environments(environments)
+
+    n_structures = len(data["structures"])
+    if "environments" in data:
+        n_atoms = len(data["environments"])
+    else:
+        n_atoms = sum(s["size"] for s in data["structures"])
+
+    data["properties"] = {}
+    if properties is not None:
+        properties = _expand_properties(properties, n_structures, n_atoms)
+        for name, value in properties.items():
+            data["properties"].update(_linearize(name, value, n_structures, n_atoms))
+
+    # get properties coming from the frames
+    for name, property in atom_properties(frames, composition).items():
+        # check that atom properties don't override user-provided properties
+        if name in data["properties"]:
+            raise Exception(
+                f"Atom property {name} coming from the frames is already in "
+                "this dataset"
+            )
+
+        if "environments" in data:
+            # only include values for the subset of environments requested by the user
+            included = [[False] * s["size"] for s in data["structures"]]
+            for environment in data["environments"]:
+                included[environment["structure"]][environment["center"]] = True
+
+            included = np.concatenate(included)
+            property["values"] = np.array(property["values"])[included]
+
+        data["properties"].update(_linearize(name, property, n_structures, n_atoms))
+
+    for name, property in structure_properties(frames, composition).items():
+        # check that frame properties don't override user-provided properties or
+        # atom properties
+        if name in data["properties"]:
+            raise Exception(
+                f"Structure property {name} coming from the frames is already in "
+                "this dataset"
+            )
+
+        data["properties"].update(_linearize(name, property, n_structures, n_atoms))
+
+    return data
+
+
+def write_input(
+    path,
+    frames,
+    meta=None,
+    properties=None,
+    environments=None,
+    composition=False,
+):
+    """
+    Create the input JSON file used by the default chemiscope visualizer, and
+    save it to the given ``path``.
+
+    :param str path: name of the file to use to save the json data. If it ends
+                     with '.gz', a gzip compressed file will be written
+    :param list frames: list of atomic structures. For now, only `ase.Atoms`_
+                        objects are supported
+    :param dict meta: optional metadata of the dataset
+    :param dict properties: optional dictionary of additional properties
+    :param list environments: optional list of (structure id, atom id, cutoff)
+        specifying which atoms have properties attached and how far out
+        atom-centered environments should be drawn by default
+    :param bool composition: optional. False by default. If True, will add to
+                                the structure and atom properties information
+                                about chemical composition
+
+    This function uses :py:func:`create_input` to generate the input data, see
+    the documentation of this function for more information.
+
+    Here is a quick example of generating a chemiscope input reading the
+    structures from a file that `ase <ase-io_>`_ can read, and performing PCA
+    using `sklearn`_ on a descriptor computed with another package.
+
+    .. code-block:: python
+
+        import ase
+        from ase import io
+        import numpy as np
+        import sklearn
+        from sklearn import decomposition
+        from chemiscope import write_input
+
+        frames = ase.io.read('trajectory.xyz', ':')
+
+        # example property 1: list containing the energy of each structure,
+        # from calculations performed beforehand
+        energies = [ ... ]
+
+
+        # example property 2: PCA projection computed using sklearn.
+        # X contains a multi-dimensional descriptor of the structure
+        X = np.array( ... )
+        pca = sklearn.decomposition.PCA(n_components=3).fit_transform(X)
+
+        properties = {
+            "PCA": {
+                "target": "atom",
+                "values": pca,
+            },
+            "energies": {
+                "target": "structure",
+                "values": energies,
+                "units": "kcal/mol",
+            },
+        }
+
+        write_input("chemiscope.json.gz", frames=frames, properties=properties)
+
+    .. _ase-io: https://wiki.fysik.dtu.dk/ase/ase/io/io.html
+    .. _sklearn: https://scikit-learn.org/
+    """
+
+    if not (path.endswith(".json") or path.endswith(".json.gz")):
+        raise Exception("path should end with .json or .json.gz")
+
+    data = create_input(frames, meta, properties, environments, composition)
+
+    if "name" not in data["meta"] or data["meta"]["name"] == "<unknown>":
+        data["meta"]["name"] = os.path.basename(path).split(".")[0]
+
+    if path.endswith(".gz"):
+        with gzip.open(path, "w", 9) as file:
+            file.write(json.dumps(data).encode("utf8"))
+    else:
+        with open(path, "w") as file:
+            json.dump(data, file, indent=2)
 
 
 def _expand_properties(properties, n_structures, n_atoms):
@@ -92,239 +315,6 @@ def _expand_properties(properties, n_structures, n_atoms):
     return properties
 
 
-def create_input(frames, meta=None, properties=None, centers=None, composition=False):
-    """
-    Create a dictionary that can be saved to JSON using the format used by
-    the default chemiscope visualizer.
-
-    :param list frames: list of atomic structures. For now, only `ase.Atoms`_
-                        objects are supported
-    :param dict meta: optional metadata of the dataset, see below
-    :param dict properties: optional dictionary of additional properties, see below
-    :param list centers: optional list of (structure, center, cutoff) tuples/arrays
-        specifying which centers have properties attached and how
-        far out environments should be drawn by default
-    :param bool composition: optional, ``False`` by default. If ``True``, will
-        add to structure and atom properties containing information about the
-        chemical composition
-
-    The dataset metadata should be given in the ``meta`` dictionary, the
-    possible keys are:
-
-    .. code-block:: python
-
-        meta = {
-            'name': '...',         # str, dataset name
-            'description': '...',  # str, dataset description
-            'authors': [           # list of str, dataset authors, OPTIONAL
-                '...',
-            ],
-            'references': [        # list of str, references for this dataset,
-                '...',             # OPTIONAL
-            ],
-        }
-
-    The returned dictionary will contain all the properties defined on the
-    `ase.Atoms`_ objects. Values in ``ase.Atoms.arrays`` are mapped to
-    ``target = "atom"`` properties; while values in ``ase.Atoms.info`` are
-    mapped to ``target = "structure"`` properties. The only exception is
-    ``ase.Atoms.arrays["numbers"]``, which is always ignored. If you want to
-    have the atomic numbers as a property, you should add it to ``properties``
-    manually.
-
-    Additional properties can be added with the ``properties`` parameter. This
-    parameter should be a dictionary containing one entry for each property.
-    Each entry contains a ``target`` attribute (``'atom'`` or ``'structure'``)
-    and a set of values. ``values`` can be a Python list of float or string; a
-    1D numpy array of numeric values; or a 2D numpy array of numeric values. In
-    the later case, multiple properties will be generated along the second axis.
-    For example, passing
-
-    .. code-block:: python
-
-        properties = {
-            'cheese': {
-                'target': 'atom',
-                'values': np.zeros((300, 4)),
-                # optional: property unit
-                'unit': 'random / fs',
-                # optional: property description
-                'description': 'a random property for example',
-            }
-        }
-
-    will generate four properties named ``cheese[1]``, ``cheese[2]``,
-    ``cheese[3]``,  and ``cheese[4]``, each containing 300 values.
-
-    It is also possible to pass shortened representation of the properties, for
-    instance:
-
-    .. code-block:: python
-
-        properties = {
-            'cheese':  np.zeros((300, 4)),
-            }
-        }
-
-    In this case, the type of property (structure or atom) would be deduced
-    by comparing the numbers atoms and structures in the dataset to the
-    length of provided list/np.ndarray.
-
-    .. _`ase.Atoms`: https://wiki.fysik.dtu.dk/ase/ase/atoms.html
-    """
-
-    data = {"meta": {}}
-    if meta is not None:
-        if "name" in meta:
-            data["meta"]["name"] = str(meta["name"])
-
-        if "description" in meta:
-            data["meta"]["description"] = str(meta["description"])
-
-        if "authors" in meta:
-            data["meta"]["authors"] = list(map(str, meta["authors"]))
-
-        if "references" in meta:
-            data["meta"]["references"] = list(map(str, meta["references"]))
-
-        for key in meta.keys():
-            if key not in ["name", "description", "authors", "references"]:
-                warnings.warn(f"ignoring unexpected metadata: {key}")
-
-    if "name" not in data["meta"] or not data["meta"]["name"]:
-        data["meta"]["name"] = "<unknown>"
-
-    data["structures"] = frames_to_json(frames)
-    n_structures = len(data["structures"])
-    data["environments"] = []
-    if centers is None:
-        centers = []
-    n_centers = len(centers)
-
-    data["properties"] = {}
-    if properties is not None:
-        properties = _expand_properties(properties, n_structures, n_centers)
-        for name, value in properties.items():
-            _validate_property(name, value)
-            if value["target"] == "atom" and n_centers == 0:
-                # Defaults to all centers, if an atom-center property is present
-                for i in range(n_structures):
-                    for j in range(data["structures"][i]["size"]):
-                        centers.append([i, j])
-                n_centers = len(centers)
-            data["properties"].update(_linearize(name, value, n_structures, n_centers))
-
-    # Read properties coming from the frames
-    frames_atom_properties = atom_properties(frames, composition)
-    if len(frames_atom_properties) > 0:
-        # overrides centers with those coming from the frames
-        centers = atom_centers(frames)
-        if n_centers > 0 and len(centers) != n_centers:
-            raise ValueError("Incompatible definition of atom centers")
-        n_centers = len(centers)
-    data["environments"] = _generate_environments(centers)
-
-    for name, value in frames_atom_properties.items():
-        print("atom property ", name)
-        _validate_property(name, value)
-        data["properties"].update(_linearize(name, value, n_structures, n_centers))
-
-    for name, value in structure_properties(frames, composition).items():
-        _validate_property(name, value)
-        if name in data["properties"]:
-            raise IndexError("Duplicate property name: ", name)
-        data["properties"].update(_linearize(name, value, n_structures, n_centers))
-
-    return data
-
-
-def write_input(
-    path,
-    frames,
-    meta=None,
-    properties=None,
-    centers=None,
-    composition=False,
-):
-    """
-    Create the input JSON file used by the default chemiscope visualizer, and
-    save it to the given ``path``.
-
-    :param str path: name of the file to use to save the json data. If it ends
-                     with '.gz', a gzip compressed file will be written
-    :param list frames: list of atomic structures. For now, only `ase.Atoms`_
-                        objects are supported
-    :param dict meta: optional metadata of the dataset
-    :param dict properties: optional dictionary of additional properties
-    :param list centers: optional list of (structure, center, cutoff) tuples/arrays
-        specifying which centers have properties attached and how
-        far out environments should be drawn by default
-    :param bool composition: optional. False by default. If True, will add to
-                                the structure and atom properties information
-                                about chemical composition
-
-    This function uses :py:func:`create_input` to generate the input data, see
-    the documentation of this function for more information.
-
-    Here is a quick example of generating a chemiscope input reading the
-    structures from a file that `ase <ase-io_>`_ can read, and performing PCA
-    using `sklearn`_ on a descriptor computed with another package.
-
-    .. code-block:: python
-
-        import ase
-        from ase import io
-        import numpy as np
-        import sklearn
-        from sklearn import decomposition
-        from chemiscope import write_input
-
-        frames = ase.io.read('trajectory.xyz', ':')
-
-        # example property 1: list containing the energy of each structure,
-        # from calculations performed beforehand
-        energies = [ ... ]
-
-
-        # example property 2: PCA projection computed using sklearn.
-        # X contains a multi-dimensional descriptor of the structure
-        X = np.array( ... )
-        pca = sklearn.decomposition.PCA(n_components=3).fit_transform(X)
-
-        properties = {
-            "PCA": {
-                "target": "atom",
-                "values": pca,
-            },
-            "energies": {
-                "target": "structure",
-                "values": energies,
-                "units": "kcal/mol",
-            },
-        }
-
-        write_input("chemiscope.json.gz", frames=frames, properties=properties)
-
-    .. _ase-io: https://wiki.fysik.dtu.dk/ase/ase/io/io.html
-    .. _sklearn: https://scikit-learn.org/
-    """
-
-    if not (path.endswith(".json") or path.endswith(".json.gz")):
-        raise Exception("path should end with .json or .json.gz")
-
-    data = create_input(frames, meta, properties, centers, composition)
-
-    if "name" not in data["meta"] or data["meta"]["name"] == "<unknown>":
-        data["meta"]["name"] = os.path.basename(path).split(".")[0]
-
-    if path.endswith(".gz"):
-        with gzip.open(path, "w", 9) as file:
-            file.write(json.dumps(data).encode("utf8"))
-    else:
-        with open(path, "w") as file:
-            json.dump(data, file, indent=2)
-
-
 def _typetransform(data, name):
     """
     Transform the given data to either a list of string or a list of floats.
@@ -364,6 +354,8 @@ def _linearize(name, property, n_structures, n_centers):
     :param n_structures: total number of structures, to validate the array sizes
     :param n_centers: total number of atoms, to validate the array sizes
     """
+    _validate_property(name, property)
+
     data = {}
     if isinstance(property["values"], list):
         data[name] = {
@@ -423,18 +415,24 @@ def _linearize(name, property, n_structures, n_centers):
     return data
 
 
-def _generate_environments(centers, fixed_cutoff=3.5):
-    environments = []
-    for center in centers:
-        if len(center) == 3:
-            frame, atom, cutoff = center
+def _normalize_environments(environments, fixed_cutoff=3.5):
+    cleaned = []
+    for environment in environments:
+        if len(environment) == 3:
+            frame, atom, cutoff = environment
         else:
-            frame, atom = center
+            frame, atom = environment
             cutoff = fixed_cutoff
-        environments.append(
-            {"structure": int(frame), "center": int(atom), "cutoff": cutoff}
+
+        cleaned.append(
+            {
+                "structure": int(frame),
+                "center": int(atom),
+                "cutoff": float(cutoff),
+            }
         )
-    return environments
+
+    return cleaned
 
 
 def _validate_property(name, property):
@@ -459,3 +457,26 @@ def _validate_property(name, property):
     for key in property.keys():
         if key not in ["target", "values", "description", "units"]:
             warnings.warn(f"ignoring unexpected property key: {key}")
+
+
+def _normalize_metadata(meta):
+    cleaned = {}
+    if "name" in meta and str(meta["name"]) != "":
+        cleaned["name"] = str(meta["name"])
+    else:
+        cleaned["name"] = "<unknown>"
+
+    if "description" in meta:
+        cleaned["description"] = str(meta["description"])
+
+    if "authors" in meta:
+        cleaned["authors"] = list(map(str, meta["authors"]))
+
+    if "references" in meta:
+        cleaned["references"] = list(map(str, meta["references"]))
+
+    for key in meta.keys():
+        if key not in ["name", "description", "authors", "references"]:
+            warnings.warn(f"ignoring unexpected metadata: {key}")
+
+    return cleaned
