@@ -11,7 +11,7 @@ import { optionValidator } from '../options';
 import { GUID, PositioningCallback, makeDraggable, sendWarning } from '../utils';
 
 import BARS_SVG from '../static/bars.svg';
-import HTML_OPTIONS from './options.html';
+import HTML_OPTIONS from './options.html.in';
 
 export class StructureOptions extends OptionsGroup {
     /// should we show bonds
@@ -174,10 +174,10 @@ export class StructureOptions extends OptionsGroup {
             .replace(/for="(.*?)"/g, (_: string, id: string) => `for="${guid}-${id}"`)
             .replace(/data-bs-target="#(.*?)"/g, (_: string, id: string) => `data-bs-target="#${guid}-${id}"`);
 
-        const modal = template.content.firstChild as HTMLElement;
-        const modalDialog = modal.childNodes[1] as HTMLElement;
-        assert(modalDialog !== undefined);
-        assert(modalDialog.classList.contains('modal-dialog'));
+        const modal = template.content.querySelector('.modal');
+        assert(modal !== null && modal instanceof HTMLElement);
+        const modalDialog = modal.querySelector('.modal-dialog');
+        assert(modalDialog !== null && modalDialog instanceof HTMLElement);
 
         // Position modal near the actual viewer
         openModal.addEventListener('click', () => {

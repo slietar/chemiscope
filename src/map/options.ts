@@ -15,7 +15,7 @@ import { NumericProperties, NumericProperty } from './data';
 import { COLOR_MAPS } from './colorscales';
 
 import BARS_SVG from '../static/bars.svg';
-import HTML_OPTIONS from './options.html';
+import HTML_OPTIONS from './options.html.in';
 
 // in 3D mode, only strings are supported for 'marker.symbol', and only very few
 // of them. See https://github.com/plotly/plotly.js/issues/4205 as the plotly
@@ -321,10 +321,11 @@ export class MapOptions extends OptionsGroup {
             .replace(/for="(.*?)"/g, (_: string, id: string) => `for="${this.getId(id)}"`)
             .replace(/data-bs-target="#(.*?)"/g, (_: string, id: string) => `data-bs-target="#${this.getId(id)}"`);
 
-        const modal = template.content.firstChild as HTMLElement;
-        const modalDialog = modal.childNodes[1] as HTMLElement;
-        assert(modalDialog !== undefined);
-        assert(modalDialog.classList.contains('modal-dialog'));
+        const modal = template.content.querySelector('.modal');
+        assert(modal !== null && modal instanceof HTMLElement);
+        const modalDialog = modal.querySelector('.modal-dialog');
+        assert(modalDialog !== null && modalDialog instanceof HTMLElement);
+
         // make the settings modal draggable
         makeDraggable(modalDialog, '.modal-header');
 

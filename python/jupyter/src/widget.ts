@@ -95,6 +95,9 @@ export class ChemiscopeView extends DOMWidgetView {
                 this._updatePythonSettings();
             })
             .catch((e: Error) => {
+                // eslint-disable-next-line no-console
+                console.error(e);
+
                 const display = getByID(`${this.guid}-error-display`, element);
                 display.style.display = 'block';
                 display.getElementsByTagName('p')[0].innerText = e.toString();
@@ -197,6 +200,9 @@ export class StructureView extends DOMWidgetView {
                 this._updatePythonSettings();
             })
             .catch((e: Error) => {
+                // eslint-disable-next-line no-console
+                console.error(e);
+
                 const display = getByID(`${this.guid}-error-display`, element);
                 display.style.display = 'block';
                 display.getElementsByTagName('p')[0].innerText = e.toString();
@@ -305,6 +311,9 @@ export class MapView extends DOMWidgetView {
                 this._updatePythonSettings();
             })
             .catch((e: Error) => {
+                // eslint-disable-next-line no-console
+                console.error(e);
+
                 const display = getByID(`${this.guid}-error-display`, element);
                 display.style.display = 'block';
                 display.getElementsByTagName('p')[0].innerText = e.toString();

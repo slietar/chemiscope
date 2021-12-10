@@ -6,8 +6,15 @@ from traitlets import Unicode, Bool, Dict
 
 from .input import create_input
 
+# this needs to match the version/name defined in
+# python/jupyter/src/labextension.ts and python/jupyter/extension.js
+PACKAGE_NAME = "chemiscope"
+PACKAGE_VERSION = "0.4.0"
+
 
 class ChemiscopeWidgetBase(ipywidgets.DOMWidget, ipywidgets.ValueWidget):
+    _view_module = Unicode(PACKAGE_NAME).tag(sync=True)
+    _view_module_version = Unicode(PACKAGE_VERSION).tag(sync=True)
     data = Unicode().tag(sync=True)
     has_metadata = Bool().tag(sync=True)
 
@@ -47,7 +54,6 @@ class ChemiscopeWidgetBase(ipywidgets.DOMWidget, ipywidgets.ValueWidget):
 @ipywidgets.register
 class ChemiscopeWidget(ChemiscopeWidgetBase):
     _view_name = Unicode("ChemiscopeView").tag(sync=True)
-    _view_module = Unicode("chemiscope-widget").tag(sync=True)
 
     def __init__(self, data, has_metadata):
         super().__init__(data, has_metadata)
@@ -56,7 +62,6 @@ class ChemiscopeWidget(ChemiscopeWidgetBase):
 @ipywidgets.register
 class StructureWidget(ChemiscopeWidgetBase):
     _view_name = Unicode("StructureView").tag(sync=True)
-    _view_module = Unicode("chemiscope-widget").tag(sync=True)
 
     def __init__(self, data, has_metadata):
         super().__init__(data, has_metadata)
@@ -65,7 +70,6 @@ class StructureWidget(ChemiscopeWidgetBase):
 @ipywidgets.register
 class MapWidget(ChemiscopeWidgetBase):
     _view_name = Unicode("MapView").tag(sync=True)
-    _view_module = Unicode("chemiscope-widget").tag(sync=True)
 
     def __init__(self, data, has_metadata):
         super().__init__(data, has_metadata)

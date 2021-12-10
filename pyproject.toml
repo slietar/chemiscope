@@ -2,6 +2,8 @@
 requires = [
     "setuptools",
     "wheel",
+    # TODO: get the actual set of dependencies for this
+    "jupyterlab",
 ]
 build-backend = "setuptools.build_meta"
 

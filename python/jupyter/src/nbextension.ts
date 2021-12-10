@@ -9,6 +9,6 @@
 // dynamically.
 (window as any).__webpack_public_path__ =
     (document.querySelector('body')!.getAttribute('data-base-url') as string) +
-    'nbextensions/chemiscope-widget';
+    'nbextensions/chemiscope';
 
 export * from './widget';

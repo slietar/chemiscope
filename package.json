@@ -23,8 +23,11 @@
     "test": "npm run test:karma && npm run test:lint",
     "test:karma": "karma start",
     "test:lint": "eslint src && prettier --check src",
-    "build": "rimraf dist && webpack --mode production && npm run merge-dts",
-    "build:nbextension": "webpack --mode production --config python/webpack.config.ts",
+    "build": "rimraf dist && webpack --mode development && npm run merge-dts",
+    "build:nbextension": "webpack --mode development --config python/webpack.config.nbextension.ts",
+    "build:labextension": "npm run build && npm run build:labextension:webpack-config && npm run build:labextension:jupyter",
+    "build:labextension:webpack-config": "tsc --target es5 --esModuleInterop python/webpack.config.labextension.ts --outDir dist/",
+    "build:labextension:jupyter": "jupyter labextension build --dev-build --no-minimize --development=True .",
     "download-examples": "ts-node ./utils/download-examples.ts",
     "api-docs": "typedoc",
     "start": "npm run download-examples && webpack serve --mode development --static ./app",
@@ -37,6 +40,7 @@
   "devDependencies": {
     "@jupyter-widgets/base": "^4.0.0",
     "@popperjs/core": "^2.11.2",
+    "@jupyterlab/builder": "^3.1.12",
     "@types/chai": "^4",
     "@types/glob": "^7",
     "@types/jquery": "^3.5",
@@ -89,5 +93,17 @@
     "webpack": "^5.57",
     "webpack-cli": "^4.9",
     "webpack-dev-server": "^4.3"
+  },
+  "dependencies": {},
+  "jupyterlab": {
+    "extension": "python/jupyter/src/labextension.ts",
+    "webpackConfig": "dist/webpack.config.labextension.js",
+    "outputDir": "python/labextension",
+    "sharedPackages": {
+      "@jupyter-widgets/base": {
+        "bundled": false,
+        "singleton": true
+      }
+    }
   }
 }
